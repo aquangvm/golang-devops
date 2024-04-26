@@ -1,0 +1,52 @@
+on:
+ push:
+ branches: [ "main", "develop" ]
+ workflow_dispatch:
+env:
+ DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+ DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+ IMAGE_NAME: app-devops
+ CONTAINER_NAME: app-devops
+permissions:
+ contents: read
+jobs:
+
+ build:
+ runs-on: self-hosted
+ steps:
+ - uses: actions/checkout@v3
+
+ - name: build docker image
+ run: |
+ COMMIT_SHA_SHORT=`echo ${GITHUB_SHA} | cut -c1-7`
+ docker build -t $DOCKER_USERNAME/$IMAGE_NAME:$COMMIT_SHA_SHORT .
+ push-image:
+ runs-on: self-hosted
+ needs: build
+ steps:
+ - name: push docker image
+ run: |
+ COMMIT_SHA_SHORT=`echo ${GITHUB_SHA} | cut -c1-7`
+ docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+ docker push $DOCKER_USERNAME/$IMAGE_NAME:$COMMIT_SHA_SHORT
+
+ deploy:
+ permissions:
+ contents: none
+ runs-on: self-hosted
+ needs: push-image
+ steps:
+ - name: run docker container
+ run: |
+ COMMIT_SHA_SHORT=`echo ${GITHUB_SHA} | cut -c1-7`
+
+ containerId=$(docker ps -qa --filter "name=^$CONTAINER_NAME\$")
+ if [ -n "$containerId" ]; then
+ echo "Stop and remove existing container..."
+ docker stop $CONTAINER_NAME | xargs docker rm
+ fi
+ docker rmi $DOCKER_USERNAME/$IMAGE_NAME:$COMMIT_SHA_SHORT || true
+ docker pull $DOCKER_USERNAME/$IMAGE_NAME:$COMMIT_SHA_SHORT
+ echo "Start new container..."
+ docker run -d --name $CONTAINER_NAME -p 8080:8080
+$DOCKER_USERNAME/$IMAGE_NAME:$COMMIT_SHA_SHORT
